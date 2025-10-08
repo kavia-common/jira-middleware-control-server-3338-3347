@@ -1,12 +1,15 @@
 import logging
 import sys
-
+import time
+from contextlib import contextmanager
+from typing import Any, Dict, Optional
 
 
 class RequestIDFilter(logging.Filter):
     """Inject request_id if present in record.extra"""
 
     def filter(self, record: logging.LogRecord) -> bool:
+        # ensure request_id attribute exists to satisfy formatter even if not provided
         if not hasattr(record, "request_id"):
             record.request_id = getattr(record, "request_id", None)
         return True
@@ -44,3 +47,35 @@ def configure_logging(level: str = "INFO") -> None:
         for h in list(uv_logger.handlers):
             uv_logger.removeHandler(h)
         uv_logger.addHandler(handler)
+
+
+# PUBLIC_INTERFACE
+def log_debug_with_context(message: str, request_id: Optional[str] = None, extra: Optional[Dict[str, Any]] = None) -> None:
+    """
+    Emit a debug-level log with request_id and arbitrary context fields.
+    """
+    data = {"request_id": request_id}
+    if extra:
+        data.update(extra)
+    logger.debug(message, extra=data)
+
+
+# PUBLIC_INTERFACE
+@contextmanager
+def timed_log_debug(message: str, request_id: Optional[str] = None, extra: Optional[Dict[str, Any]] = None):
+    """
+    Context manager to time a code block and log duration at debug level.
+
+    Usage:
+        with timed_log_debug("jira_request", request_id=req_id, extra={"method": "GET", "path": "/issue"}):
+            # do work
+    """
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        duration_ms = int((time.perf_counter() - start) * 1000)
+        data = {"request_id": request_id, "duration_ms": duration_ms}
+        if extra:
+            data.update(extra)
+        logger.debug(message, extra=data)

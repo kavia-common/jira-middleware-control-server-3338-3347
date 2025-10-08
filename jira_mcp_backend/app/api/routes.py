@@ -30,13 +30,17 @@ def _wrap_success(data: Any, request: Request) -> Dict[str, Any]:
 
 
 def _raise_http_error(e: JiraClientError, request: Request) -> None:
-    """Map JiraClientError to HTTPException with standardized body."""
+    """Map JiraClientError to HTTPException with standardized body and request correlation."""
     code = "jira_error"
     message = e.message
     details = e.details
+    status_code = getattr(e, "status_code", 502) or 502
     raise HTTPException(
-        status_code=e.status_code,
-        detail={"error": {"code": code, "message": message, "details": details}, "request_id": getattr(request.state, "request_id", None)},
+        status_code=status_code,
+        detail={
+            "error": {"code": code, "message": message, "details": details},
+            "request_id": getattr(request.state, "request_id", None),
+        },
     )
 
 

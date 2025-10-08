@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import httpx
 
 from app.core.config import get_settings
+from app.utils.logging import logger, timed_log_debug
 
 
 class JiraClientError(Exception):
@@ -23,8 +24,8 @@ class JiraClientError(Exception):
 class JiraClient:
     """
     PUBLIC_INTERFACE
-    Async JIRA API client with basic auth and exponential backoff retries for 5xx errors
-    and rate limiting (429) handling. Supports core and agile endpoints.
+    Async JIRA API client with basic auth and exponential backoff retries for 5xx errors,
+    rate limiting (429) handling with Retry-After support, and structured debug logging.
     """
 
     def __init__(self, base_url: str, email: str, api_token: str, timeout: float = 15.0) -> None:
@@ -66,59 +67,115 @@ class JiraClient:
           - 5xx responses
           - 429 (Rate limited) honoring Retry-After header if present
           - network errors (httpx.HTTPError)
-        Maps client/server errors to JiraClientError with appropriate status.
+        Maps client/server errors to JiraClientError with appropriate status mapping:
+          - 400, 401, 403, 404 propagate as-is
+          - other 4xx -> 400
+          - 5xx -> 502
         """
-        max_attempts = 4
-        backoff_base = 0.6
+        settings = get_settings()
+        max_attempts = max(1, int(getattr(settings, "JIRA_RETRY_MAX_ATTEMPTS", 3)))
+        backoff_base = float(getattr(settings, "JIRA_RETRY_BACKOFF_BASE", 0.5))
         last_exc: Optional[Exception] = None
 
-        for attempt in range(1, max_attempts + 1):
-            try:
-                client = await self._get_client()
-                resp = await client.request(method, url, **kwargs)
+        # Attempt context for logging
+        attempt = 0
+        while attempt < max_attempts:
+            attempt += 1
+            # Try to pull request_id from context by allowing caller to pass via headers if present
+            request_id = None
+            headers = kwargs.get("headers") or {}
+            request_id = headers.get("X-Request-ID")
 
-                # Rate limit handling
-                if resp.status_code == 429:
-                    retry_after = resp.headers.get("Retry-After")
-                    delay = float(retry_after) if retry_after and retry_after.isdigit() else backoff_base * (2 ** (attempt - 1))
-                    if attempt < max_attempts:
-                        await asyncio.sleep(delay)
-                        continue
-                    # exceeded retries
-                    raise JiraClientError(
-                        message="JIRA rate limit exceeded",
-                        status_code=429,
-                        details=await self._safe_response_text(resp),
+            with timed_log_debug(
+                "jira_http_request",
+                request_id=request_id,
+                extra={"method": method, "url": url, "attempt": attempt},
+            ):
+                try:
+                    client = await self._get_client()
+                    resp = await client.request(method, url, **kwargs)
+
+                    # Debug basic response info
+                    logger.debug(
+                        "jira_http_response",
+                        extra={
+                            "request_id": request_id,
+                            "method": method,
+                            "url": url,
+                            "status_code": resp.status_code,
+                            "attempt": attempt,
+                        },
                     )
 
-                # 5xx -> retry
-                if 500 <= resp.status_code < 600:
-                    if attempt < max_attempts:
-                        await asyncio.sleep(backoff_base * (2 ** (attempt - 1)))
-                        continue
-                    raise JiraClientError(
-                        message=f"JIRA server error {resp.status_code}",
-                        status_code=502,
-                        details=await self._safe_response_text(resp),
-                    )
+                    # 429 handling with Retry-After
+                    if resp.status_code == 429:
+                        retry_after = resp.headers.get("Retry-After")
+                        try:
+                            delay = float(retry_after) if retry_after is not None else backoff_base * (2 ** (attempt - 1))
+                        except ValueError:
+                            delay = backoff_base * (2 ** (attempt - 1))
+                        if attempt < max_attempts:
+                            logger.debug(
+                                "jira_rate_limited_retrying",
+                                extra={"request_id": request_id, "delay_s": delay, "attempt": attempt},
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+                        # exceeded retries
+                        raise JiraClientError(
+                            message="JIRA rate limit exceeded",
+                            status_code=429,
+                            details=await self._safe_response_text(resp),
+                        )
 
-                # 4xx -> client error mapping (no retry except 429 above)
-                if 400 <= resp.status_code < 500:
-                    raise JiraClientError(
-                        message=f"JIRA client error {resp.status_code}",
-                        status_code=resp.status_code,
-                        details=await self._safe_response_text(resp),
-                    )
+                    # 5xx -> retry
+                    if 500 <= resp.status_code < 600:
+                        if attempt < max_attempts:
+                            delay = backoff_base * (2 ** (attempt - 1))
+                            logger.debug(
+                                "jira_server_error_retrying",
+                                extra={
+                                    "request_id": request_id,
+                                    "status_code": resp.status_code,
+                                    "delay_s": delay,
+                                    "attempt": attempt,
+                                },
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+                        raise JiraClientError(
+                            message=f"JIRA server error {resp.status_code}",
+                            status_code=502,
+                            details=await self._safe_response_text(resp),
+                        )
 
-                return resp
+                    # 4xx -> client error mapping (no retry except 429 above)
+                    if 400 <= resp.status_code < 500:
+                        mapped = resp.status_code if resp.status_code in (400, 401, 403, 404, 429) else 400
+                        raise JiraClientError(
+                            message=f"JIRA client error {resp.status_code}",
+                            status_code=mapped,
+                            details=await self._safe_response_text(resp),
+                        )
 
-            except httpx.HTTPError as exc:
-                last_exc = exc
-                if attempt >= max_attempts:
+                    return resp
+
+                except JiraClientError as exc:
+                    # Already mapped; do not retry further unless we want to for some statuses (we don't)
+                    last_exc = exc
                     break
-                await asyncio.sleep(backoff_base * (2 ** (attempt - 1)))
+                except httpx.HTTPError as exc:
+                    last_exc = exc
+                    if attempt >= max_attempts:
+                        break
+                    delay = backoff_base * (2 ** (attempt - 1))
+                    logger.debug(
+                        "jira_network_error_retrying",
+                        extra={"request_id": request_id, "delay_s": delay, "attempt": attempt, "error": str(exc)},
+                    )
+                    await asyncio.sleep(delay)
 
-        # If we get here, retries exhausted
+        # If we get here, retries exhausted or terminal error occurred
         if isinstance(last_exc, JiraClientError):
             raise last_exc
         raise JiraClientError(message="JIRA request failed", status_code=502, details=str(last_exc))
