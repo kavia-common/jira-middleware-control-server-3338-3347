@@ -1,0 +1,4 @@
+{
+    "command": "pytest",
+    "working_directory": "/home/kavia/workspace/code-generation/jira-middleware-control-server-3338-3347/jira_mcp_backend"
+}
