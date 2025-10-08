@@ -272,3 +272,26 @@ See `examples/curl-examples.sh` for end-to-end examples with `BASE_URL` and `API
 - The server is expected to run on port `3001` by the preview system.
 - Ensure your API key is configured in `APP_API_KEYS`.
 - Some operations may be constrained by project or board permissions in JIRA.
+
+## Testing
+
+Planned tests (to be implemented later):
+- Unit tests for JiraClient:
+  - Field mapping resolution for Epic Link, Epic Name, Story points (mock /rest/api/3/field).
+  - Retry/backoff logic including 429 Retry-After handling and 5xx retry with exponential backoff.
+  - Error mapping for 4xx/5xx to JiraClientError with preserved details.
+- API route tests (FastAPI TestClient/httpx AsyncClient):
+  - Auth middleware: X-API-KEY/Bearer coverage, open paths (/, /health) bypass.
+  - Create Epic/Story and validation errors.
+  - Link issue to epic idempotency (repeated calls safe).
+  - Boards/sprints listing, sprint creation/update/move issues (input limits).
+  - Transitions resolution by name/id and invalid transition handling.
+  - Comments and estimates endpoints.
+  - Sprint issues fetch and JQL helper query composition.
+  - Capacity planning math and edge cases (holidays, partial capacities).
+- Integration tests (optional):
+  - VCR or mocked HTTP server for JIRA endpoints to validate end-to-end flows.
+
+Tooling suggestions:
+- pytest, pytest-asyncio, httpx, respx (HTTP mocking), and coverage.py.
+- Add a ci workflow later to run pytest and report coverage.
