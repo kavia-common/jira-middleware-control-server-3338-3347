@@ -20,6 +20,20 @@ class Settings(BaseSettings):
     JIRA_API_TOKEN: Optional[str] = Field(default=None, description="JIRA API token")
     JIRA_CLOUD_SITE: Optional[str] = Field(default=None, description="Cloud site key, e.g., yoursite")
 
+    # JIRA client behavior
+    JIRA_TIMEOUT_SECONDS: float = Field(default=15.0, description="HTTP client timeout for JIRA API calls (seconds)")
+    JIRA_RETRY_MAX_ATTEMPTS: int = Field(default=3, description="Max retry attempts for transient JIRA errors (including 429/5xx)")
+    JIRA_RETRY_BACKOFF_BASE: float = Field(default=0.5, description="Base backoff in seconds for exponential retry")
+
+    # JIRA custom field names (display names)
+    JIRA_STORY_POINTS_FIELD_NAME: str = Field(default="Story points", description="Display name for Story Points custom field")
+    JIRA_EPIC_LINK_FIELD_NAME: str = Field(default="Epic Link", description="Display name for Epic Link custom field")
+    JIRA_EPIC_NAME_FIELD_NAME: str = Field(default="Epic Name", description="Display name for Epic Name custom field")
+
+    # Defaults for convenience
+    DEFAULT_TIMEZONE: str = Field(default="UTC", description="Default timezone for sprint date interpretation")
+    DEFAULT_BOARD_ID: Optional[int] = Field(default=None, description="Optional default Agile board id")
+
     # App config
     APP_ENV: str = Field(default="development", description="Application environment")
     LOG_LEVEL: str = Field(default="INFO", description="Logging level, e.g., DEBUG, INFO, WARNING")
@@ -43,6 +57,16 @@ class Settings(BaseSettings):
         cors_raw = env.get("APP_CORS_ORIGINS")
         if cors_raw:
             data["APP_CORS_ORIGINS"] = [v.strip() for v in cors_raw.split(",") if v.strip()]
+
+        # Optional DEFAULT_BOARD_ID: allow int or blank
+        default_board_id_raw = env.get("DEFAULT_BOARD_ID")
+        if default_board_id_raw is not None and default_board_id_raw.strip() != "":
+            try:
+                data["DEFAULT_BOARD_ID"] = int(default_board_id_raw)
+            except ValueError:
+                # Leave as None if invalid; logging left to startup validation paths if needed
+                data["DEFAULT_BOARD_ID"] = None
+
         super().__init__(**data)
 
     @property

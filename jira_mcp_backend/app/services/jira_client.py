@@ -275,7 +275,7 @@ class JiraClient:
             raise JiraClientError("Epic Link field mapping not found", status_code=500)
 
         payload = {"fields": {epic_link_field: epic_key_or_id}}
-        resp = await self._request_with_retries("PUT", f"/issue/{issue_key_or_id}", json=payload)
+        await self._request_with_retries("PUT", f"/issue/{issue_key_or_id}", json=payload)
         return {"ok": True, "issue": {"key_or_id": issue_key_or_id}, "updated_field": epic_link_field}
 
     # PUBLIC_INTERFACE
