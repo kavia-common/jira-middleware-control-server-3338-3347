@@ -359,8 +359,9 @@ class JiraClient:
         """
         Update a sprint (Agile 1.0).
         """
-        resp = await self._request_with_retries("PUT", self._agile_url(f"/sprint/{sprint_id}"), json=payload)
-        return resp.json() if resp.text else {"ok": True}
+        response = await self._request_with_retries("PUT", self._agile_url(f"/sprint/{sprint_id}"), json=payload)
+        # Some Jira responses may have empty body; normalize to ok:true
+        return response.json() if getattr(response, "text", None) else {"ok": True}
 
     # PUBLIC_INTERFACE
     async def move_issues_to_sprint(self, sprint_id: int, issue_keys: List[str]) -> Dict[str, Any]:
@@ -368,8 +369,9 @@ class JiraClient:
         Move multiple issues to a sprint (Agile 1.0).
         """
         payload = {"issues": issue_keys}
-        resp = await self._request_with_retries("POST", self._agile_url(f"/sprint/{sprint_id}/issue"), json=payload)
-        return resp.json() if resp.text else {"ok": True, "sprint_id": sprint_id, "issues": issue_keys}
+        # Perform request and normalize possibly empty body to ok:true shape
+        response = await self._request_with_retries("POST", self._agile_url(f"/sprint/{sprint_id}/issue"), json=payload)
+        return response.json() if getattr(response, "text", None) else {"ok": True, "sprint_id": sprint_id, "issues": issue_keys}
 
     # PUBLIC_INTERFACE
     async def get_sprint_issues(self, sprint_id: int, jql_filters: Optional[str] = None) -> Dict[str, Any]:
