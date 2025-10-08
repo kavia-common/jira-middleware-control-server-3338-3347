@@ -1,15 +1,17 @@
+from __future__ import annotations
+
 import json
-import os
+from pathlib import Path
 
-from src.api.main import app
+from .main import app
 
-# Get the OpenAPI schema
-openapi_schema = app.openapi()
+def main() -> None:
+    """Generate OpenAPI schema to interfaces/openapi.json."""
+    schema = app.openapi()
+    out_path = Path(__file__).resolve().parents[2] / "interfaces" / "openapi.json"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(schema, indent=2))
+    print(f"Wrote OpenAPI to {out_path}")
 
-# Write to file
-output_dir = "interfaces"
-os.makedirs(output_dir, exist_ok=True)
-output_path = os.path.join(output_dir, "openapi.json")
-
-with open(output_path, "w") as f:
-    json.dump(openapi_schema, f, indent=2)
+if __name__ == "__main__":
+    main()
